@@ -1,0 +1,46 @@
+[project]
+name = "fedora-docs-rag"
+version = "0.1.0"
+description = "Pre-built RAG database of Fedora documentation"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+authors = [
+    { name = "Ellis Low", email = "lifto@mac.com" }
+]
+keywords = ["fedora", "documentation", "rag", "ai", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Documentation",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "docs2db>=0.1.0",
+    "docs2db-api>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Lifto/FedoraDocsRAG"
+Repository = "https://github.com/Lifto/FedoraDocsRAG"
+Issues = "https://github.com/Lifto/FedoraDocsRAG/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # Line too long (handled by formatter)
