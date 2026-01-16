@@ -2,6 +2,12 @@
 
 All notable changes to FedoraDocsRAG will be documented in this file.
 
+## [1.1.0] - 2026-01-16
+
+### Improved
+
+- Database includes Fedora Docs specific refinement prompt.
+
 ## [1.0.0] - 2026-01-15
 
 ### Initial Release
