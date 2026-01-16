@@ -1,6 +1,6 @@
 [project]
 name = "fedora-docs-rag"
-version = "0.1.0"
+version = "1.0.0"
 description = "Pre-built RAG database of Fedora documentation"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -40,7 +40,7 @@ packages = ["."]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

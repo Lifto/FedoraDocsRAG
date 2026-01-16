@@ -28,10 +28,10 @@ curl -LO https://github.com/Lifto/FedoraDocsRAG/releases/latest/download/fedora-
 
 ```bash
 # Restore the dump (starts PostgreSQL via Podman automatically)
-uv docs2db db-restore fedora-docs.sql
+uvx docs2db db-restore fedora-docs.sql
 
 # Query the database
-uv docs2db-api query "How do I install packages on Fedora?"
+uvx docs2db-api query "How do I install packages on Fedora?"
 ```
 
 ## Building from Source
