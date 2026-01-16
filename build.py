@@ -33,35 +33,8 @@ CONTENT_DIR = Path("docs2db_content")
 OUTPUT_DIR = Path("dist")
 ANTORA_IMAGE = "docker.io/antora/antora"
 
-# All Fedora documentation repositories
-REPOS = [
-    # Core documentation
-    "https://pagure.io/fedora-docs/quick-docs.git",
-    "https://gitlab.com/fedora/docs/fedora-linux-documentation/fedora-linux-sysadmin-guide.git",
-    "https://gitlab.com/fedora/docs/fedora-linux-documentation/release-notes.git",
-    "https://gitlab.com/fedora/docs/fedora-linux-documentation/release-docs-home.git",
-    # Container/Cloud variants
-    "https://github.com/coreos/fedora-coreos-docs.git",
-    "https://github.com/containers/podman.io.git",
-    "https://pagure.io/atomic-desktops/docs.git",
-    "https://github.com/fedora-silverblue/silverblue-docs.git",
-    # Server/Infrastructure
-    "https://pagure.io/fedora-docs/fedora-server-docs.git",
-    "https://pagure.io/epel/epel-docs.git",
-    "https://pagure.io/fedora-infra/infra-docs.git",
-    # IoT
-    "https://github.com/fedora-iot/iot-docs.git",
-    # Community/Contributor
-    "https://gitlab.com/fedora/docs/community-tools/documentation-contributors-guide.git",
-    "https://gitlab.com/fedora/mentoring/home.git",
-    "https://pagure.io/fedora-join/fedora-join-docs.git",
-    # Packaging
-    "https://pagure.io/fedora-docs/package-maintainer-docs.git",
-    "https://pagure.io/fedora-docs/flatpak.git",
-    # QA/CI
-    "https://pagure.io/fedora-qa/qa-docs.git",
-    "https://pagure.io/fedora-ci/docs.git",
-]
+# Official Fedora Docs site repository (contains the Antora playbook)
+FEDORA_DOCS_SITE_REPO = "https://gitlab.com/fedora/docs/docs-website/docs-fp-o.git"
 
 # License to assign to all Fedora documentation
 FEDORA_LICENSE = "CC-BY-SA 4.0"
@@ -75,8 +48,8 @@ FEDORA_LICENSE = "CC-BY-SA 4.0"
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
     """Run a command and return the result."""
     print(f"  $ {' '.join(cmd)}")
-#    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-    result = subprocess.run(cmd, cwd=cwd, capture_output=False, text=True)
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+#    result = subprocess.run(cmd, cwd=cwd, capture_output=False, text=True)
 
     if check and result.returncode != 0:
         print(f"    Error (exit {result.returncode}): {result.stderr[:500]}")
@@ -109,13 +82,107 @@ def check_prerequisites() -> tuple[str | None, list[str]]:
 # =============================================================================
 
 
+def clone_site_repo(work_dir: Path) -> Path | None:
+    """Clone the official Fedora docs site repo to get the Antora playbook."""
+    site_dir = work_dir / "docs-fp-o"
+    
+    if site_dir.exists():
+        print("    Updating docs-fp-o (prod branch)...")
+        result = run(["git", "pull"], cwd=site_dir, check=False)
+    else:
+        print("    Cloning docs-fp-o (prod branch)...")
+        # site.yml is in the 'prod' branch, not main
+        result = run(
+            ["git", "clone", "--depth", "1", "--branch", "prod", 
+             FEDORA_DOCS_SITE_REPO, str(site_dir)],
+            check=False
+        )
+    
+    if result.returncode != 0:
+        print("    ❌ Failed to clone Fedora docs site repo")
+        return None
+    
+    return site_dir
+
+
+def create_simplified_site_yml(site_dir: Path) -> Path:
+    """Create a simplified site.yml without custom extensions."""
+    import yaml
+    
+    site_yml = site_dir / "site.yml"
+    simplified_yml = site_dir / "site-simplified.yml"
+    
+    if not site_yml.exists():
+        return site_yml
+    
+    with open(site_yml) as f:
+        config = yaml.safe_load(f)
+    
+    # Remove custom extensions that require extra npm packages
+    if "antora" in config:
+        config["antora"].pop("extensions", None)
+    
+    # Remove asciidoc extensions that require extra npm packages
+    if "asciidoc" in config:
+        config["asciidoc"].pop("extensions", None)
+    
+    # Write simplified config to new file
+    with open(simplified_yml, "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    
+    print("  Created site-simplified.yml (removed custom extensions)")
+    return simplified_yml
+
+
+def extract_repos_from_site(site_dir: Path) -> list[str]:
+    """Extract content source URLs from the Antora site.yml playbook."""
+    import yaml
+    
+    site_yml = site_dir / "site.yml"
+    if not site_yml.exists():
+        print(f"  Error: site.yml not found in {site_dir}")
+        return []
+    
+    try:
+        with open(site_yml) as f:
+            site_config = yaml.safe_load(f)
+    except Exception as e:
+        print(f"  Error parsing site.yml: {e}")
+        return []
+    
+    urls = []
+    sources = site_config.get("content", {}).get("sources", [])
+    
+    for source in sources:
+        url = source.get("url", "")
+        if url and url.startswith(("https://", "http://", "git@")):
+            # Normalize URL
+            if not url.endswith(".git"):
+                url = url + ".git"
+            urls.append(url)
+    
+    # Deduplicate while preserving order
+    seen = set()
+    unique_urls = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            unique_urls.append(url)
+    
+    print(f"  Found {len(unique_urls)} unique content sources in site.yml")
+    return unique_urls
+
+
 def clone_repos(repos: list[str], work_dir: Path) -> list[Path]:
     """Clone or update repositories. Returns list of successfully cloned/updated paths."""
     work_dir.mkdir(parents=True, exist_ok=True)
     cloned = []
+    failed = []
 
     for url in repos:
-        name = url.rstrip("/").split("/")[-1].replace(".git", "")
+        # Use org/repo format to avoid name clashes (e.g., atomic-desktops_docs)
+        parts = url.rstrip("/").replace(".git", "").split("/")
+        name = f"{parts[-2]}_{parts[-1]}" if len(parts) >= 2 else parts[-1]
         repo_dir = work_dir / name
 
         if repo_dir.exists():
@@ -134,28 +201,89 @@ def clone_repos(repos: list[str], work_dir: Path) -> list[Path]:
         if result.returncode == 0:
             cloned.append(repo_dir)
         else:
-            print(f"    Failed to clone {name}")
+            print(f"    ❌ Failed to clone {name}")
+            failed.append(name)
 
+    print(f"\n  Clone summary: {len(cloned)}/{len(repos)} successful")
+    if failed:
+        print(f"  Failed repos: {', '.join(failed)}")
+    
     return cloned
+
+
+def get_component_name(antora_yml_path: Path) -> str | None:
+    """Extract component name from antora.yml."""
+    import yaml
+    try:
+        with open(antora_yml_path) as f:
+            config = yaml.safe_load(f)
+        return config.get("name")
+    except Exception:
+        return None
 
 
 def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
     """Create a combined Antora playbook for all repos."""
     sources = []
+    source_details = []  # Track which repos contribute sources
+    repos_without_antora = []
+    seen_components = set()  # Track component names to skip duplicates
+    skipped_duplicates = []
 
     for repo_dir in repo_dirs:
+        repo_has_antora = False  # Track if repo has ANY antora.yml (used or skipped)
+        repo_sources = 0
+        
         # Check if repo has antora.yml at root
-        if (repo_dir / "antora.yml").exists():
-            sources.append(f"    - url: ./{repo_dir.name}\n      branches: HEAD")
+        antora_yml = repo_dir / "antora.yml"
+        if antora_yml.exists():
+            repo_has_antora = True
+            component = get_component_name(antora_yml)
+            if component and component in seen_components:
+                skipped_duplicates.append(f"{repo_dir.name} (root) -> @{component}")
+            else:
+                if component:
+                    seen_components.add(component)
+                sources.append(f"    - url: ./{repo_dir.name}\n      branches: HEAD")
+                source_details.append(f"{repo_dir.name} (root)")
+                repo_sources += 1
 
         # Check for antora.yml in subdirectories
         for subdir in repo_dir.iterdir():
-            if subdir.is_dir() and (subdir / "antora.yml").exists():
-                sources.append(
-                    f"    - url: ./{repo_dir.name}\n"
-                    f"      start_path: {subdir.name}\n"
-                    f"      branches: HEAD"
-                )
+            antora_yml = subdir / "antora.yml"
+            if subdir.is_dir() and antora_yml.exists():
+                repo_has_antora = True
+                component = get_component_name(antora_yml)
+                if component and component in seen_components:
+                    skipped_duplicates.append(f"{repo_dir.name}/{subdir.name} -> @{component}")
+                else:
+                    if component:
+                        seen_components.add(component)
+                    sources.append(
+                        f"    - url: ./{repo_dir.name}\n"
+                        f"      start_path: {subdir.name}\n"
+                        f"      branches: HEAD"
+                    )
+                    source_details.append(f"{repo_dir.name}/{subdir.name}")
+                    repo_sources += 1
+        
+        if not repo_has_antora:
+            repos_without_antora.append(repo_dir.name)
+
+    # Print detailed source info
+    print(f"\n  Antora sources found ({len(sources)} total):")
+    for detail in source_details:
+        print(f"    ✓ {detail}")
+    
+    if skipped_duplicates:
+        print(f"\n  Skipped duplicate components ({len(skipped_duplicates)}):")
+        for dup in skipped_duplicates:
+            print(f"    ⚠ {dup}")
+    
+    if repos_without_antora:
+        print(f"\n  Repos without antora.yml ({len(repos_without_antora)}):")
+        for name in repos_without_antora:
+            print(f"    ⚠ {name}")
 
     if not sources:
         print("  Error: No valid Antora sources found!")
@@ -180,22 +308,27 @@ runtime:
 
     playbook_path = work_dir / "site.yml"
     playbook_path.write_text(playbook)
-    print(f"  Created {playbook_path} with {len(sources)} sources")
+    print(f"\n  Created {playbook_path}")
     return True
 
 
-def build_with_antora(container_cmd: str, work_dir: Path) -> bool:
+def build_with_antora(container_cmd: str, work_dir: Path, site_yml: str = "site.yml") -> bool:
     """Build documentation using Antora in a container."""
     cmd = [
         container_cmd, "run", "--rm",
         "-v", f"{work_dir.absolute()}:/antora:Z",
         ANTORA_IMAGE,
-        "site.yml"
+        site_yml
     ]
 
+    print(f"  $ {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"  Error: {result.stderr[:500]}")
+        print(f"  Error (exit {result.returncode}):")
+        if result.stdout:
+            print(f"  stdout: {result.stdout[:1000]}")
+        if result.stderr:
+            print(f"  stderr: {result.stderr[:1000]}")
         return False
 
     print("  Antora build complete!")
@@ -205,6 +338,7 @@ def build_with_antora(container_cmd: str, work_dir: Path) -> bool:
 def extract_html_content(work_dir: Path, output_dir: Path) -> int:
     """Extract article content from built HTML files."""
     import json
+    from collections import defaultdict
 
     from bs4 import BeautifulSoup
 
@@ -222,6 +356,9 @@ def extract_html_content(work_dir: Path, output_dir: Path) -> int:
         old_file.unlink()
 
     count = 0
+    skipped_no_article = 0
+    component_counts = defaultdict(int)  # Track pages per component
+    
     for html_file in public_dir.rglob("*.html"):
         # Skip special files
         if html_file.name in ("404.html", "sitemap.html", "search.html"):
@@ -235,6 +372,7 @@ def extract_html_content(work_dir: Path, output_dir: Path) -> int:
             if not article:
                 article = soup.find("article")
             if not article:
+                skipped_no_article += 1
                 continue
 
             # Remove navigation elements
@@ -249,6 +387,10 @@ def extract_html_content(work_dir: Path, output_dir: Path) -> int:
             rel_path = html_file.relative_to(public_dir)
             out_name = str(rel_path).replace("/", "_")
             out_path = output_dir / out_name
+            
+            # Track by component (first directory in path)
+            component = rel_path.parts[0] if rel_path.parts else "unknown"
+            component_counts[component] += 1
 
             # Write HTML with title
             content = f"<html><head><title>{title}</title></head><body>{article}</body></html>"
@@ -268,6 +410,14 @@ def extract_html_content(work_dir: Path, output_dir: Path) -> int:
         except Exception as e:
             print(f"  Warning: Could not process {html_file}: {e}")
 
+    # Print extraction summary
+    print(f"\n  Pages extracted by component:")
+    for component, comp_count in sorted(component_counts.items(), key=lambda x: -x[1]):
+        print(f"    {component}: {comp_count} pages")
+    
+    if skipped_no_article:
+        print(f"\n  Skipped {skipped_no_article} files (no article content)")
+    
     return count
 
 
@@ -360,61 +510,69 @@ def main() -> int:
 
     steps_total = 12
 
-    # Step 1: Clone repositories
-    print(f"\n[1/{steps_total}] Cloning {len(REPOS)} repositories...")
-    repo_dirs = clone_repos(REPOS, WORK_DIR)
+    # Step 1: Clone Fedora docs site repo (to get the list of content sources)
+    print(f"\n[1/{steps_total}] Fetching Fedora docs site configuration...")
+    site_dir = clone_site_repo(WORK_DIR)
+    if not site_dir:
+        print("Error: Could not fetch Fedora docs site repo!")
+        return 1
+    
+    # Step 2: Extract and clone content repositories
+    repos = extract_repos_from_site(site_dir)
+    print(f"\n[2/{steps_total}] Cloning {len(repos)} content repositories...")
+    repo_dirs = clone_repos(repos, WORK_DIR)
     if not repo_dirs:
         print("Error: No repositories cloned!")
         return 1
     print(f"  Cloned {len(repo_dirs)} repositories")
 
-    # Step 2: Create Antora playbook
-    print(f"\n[2/{steps_total}] Creating Antora playbook...")
+    # Step 3: Create Antora playbook with local paths
+    print(f"\n[3/{steps_total}] Creating Antora playbook...")
     if not create_antora_playbook(WORK_DIR, repo_dirs):
-        cleanup(WORK_DIR)
+        print("  (build/ directory preserved for debugging)")
         return 1
 
-    # Step 3: Build with Antora
-    print(f"\n[3/{steps_total}] Building with Antora (this may take several minutes)...")
+    # Step 4: Build with Antora
+    print(f"\n[4/{steps_total}] Building with Antora (this may take several minutes)...")
     if not build_with_antora(container_cmd, WORK_DIR):
-        cleanup(WORK_DIR)
+        print("  (build/ directory preserved for debugging)")
         return 1
 
-    # Step 4: Extract HTML content
-    print(f"\n[4/{steps_total}] Extracting HTML content...")
+    # Step 5: Extract HTML content
+    print(f"\n[5/{steps_total}] Extracting HTML content...")
     count = extract_html_content(WORK_DIR, CONTENT_DIR)
     if count == 0:
         print("Error: No content extracted!")
-        cleanup(WORK_DIR)
+        print("  (build/ directory preserved for debugging)")
         return 1
     print(f"  Extracted {count} pages")
 
-    # Clean up build directory
+    # Clean up build directory (only on success)
     cleanup(WORK_DIR)
 
-    # Step 5: Ingest with docs2db
-    print(f"\n[5/{steps_total}] Ingesting with docs2db...")
+    # Step 6: Ingest with docs2db
+    print(f"\n[6/{steps_total}] Ingesting with docs2db...")
     if not run_docs2db_ingest(CONTENT_DIR):
         print("Warning: Ingest may have had issues, continuing...")
 
-    # Step 6: Chunk
-    print(f"\n[6/{steps_total}] Chunking documents...")
+    # Step 7: Chunk
+    print(f"\n[7/{steps_total}] Chunking documents...")
     if not run_docs2db_chunk():
         print("Error: Chunking failed!")
         return 1
 
-    # Step 7: Embed
-    print(f"\n[7/{steps_total}] Generating embeddings...")
+    # Step 8: Embed
+    print(f"\n[8/{steps_total}] Generating embeddings...")
     if not run_docs2db_embed():
         print("Error: Embedding failed!")
         return 1
 
-    # Step 8: Destroy existing database (ensure clean state)
-    print(f"\n[8/{steps_total}] Destroying existing database (if any)...")
+    # Step 9: Destroy existing database (ensure clean state)
+    print(f"\n[9/{steps_total}] Destroying existing database (if any)...")
     run_docs2db_db_destroy()
 
-    # Step 9: Start database
-    print(f"\n[9/{steps_total}] Starting database...")
+    # Step 10: Start database
+    print(f"\n[10/{steps_total}] Starting database...")
     if not run_docs2db_db_start():
         print("Error: Failed to start database!")
         return 1
@@ -422,8 +580,8 @@ def main() -> int:
     print("  Waiting for PostgreSQL to initialize...")
     time.sleep(5)
 
-    # Step 10: Load into database
-    print(f"\n[10/{steps_total}] Loading into database...")
+    # Step 11: Load into database
+    print(f"\n[11/{steps_total}] Loading into database...")
     if not run_docs2db_load(
         title="Fedora Documentation",
         description="RAG database of Fedora Project documentation generated by https://github.com/Lifto/FedoraDocsRAG"
@@ -432,16 +590,16 @@ def main() -> int:
         run_docs2db_db_stop()
         return 1
 
-    # Step 11: Create database dump
-    print(f"\n[11/{steps_total}] Creating database dump...")
+    # Step 12: Create database dump
+    print(f"\n[12/{steps_total}] Creating database dump...")
     dump_file = OUTPUT_DIR / "fedora-docs.sql"
     if not run_docs2db_db_dump(dump_file):
         print("Error: Dump creation failed!")
         run_docs2db_db_stop()
         return 1
 
-    # Step 12: Stop database
-    print(f"\n[12/{steps_total}] Stopping database...")
+    # Stop database
+    print("\nStopping database...")
     run_docs2db_db_stop()
 
     print()
