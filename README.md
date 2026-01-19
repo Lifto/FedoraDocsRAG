@@ -28,6 +28,7 @@ curl -LO https://github.com/Lifto/FedoraDocsRAG/releases/latest/download/fedora-
 
 ```bash
 # Restore the dump (starts PostgreSQL via Podman automatically)
+uvx docs2db db-start
 uvx docs2db db-restore fedora-docs.sql
 
 # Query the database

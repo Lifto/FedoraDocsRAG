@@ -2,6 +2,12 @@
 
 All notable changes to FedoraDocsRAG will be documented in this file.
 
+## [1.1.1] - 2026-01-19
+
+### Fixed
+
+- Fixed README quick start example
+
 ## [1.1.0] - 2026-01-16
 
 ### Improved
