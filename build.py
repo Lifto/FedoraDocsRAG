@@ -542,18 +542,19 @@ def cleanup(work_dir: Path) -> None:
 
 
 def cleanup_orphaned_docs(content_dir: Path) -> int:
-    """Remove stale docs2db artifact directories that no longer have a matching HTML file.
+    """Remove stale docs2db artifacts that no longer have a matching HTML file.
 
-    After extract_html_content() writes fresh .html files, any subdirectory in
-    content_dir whose name does not correspond to an existing .html file is
-    considered orphaned (its source page was removed from the Fedora docs site).
-    This prevents stale content from being re-ingested on subsequent runs.
+    After extract_html_content() writes fresh .html files, any subdirectory or
+    .html.meta.json file in content_dir whose name does not correspond to an
+    existing .html file is considered orphaned (its source page was removed from
+    the Fedora docs site). This prevents stale content from being re-ingested on
+    subsequent runs.
 
     Args:
         content_dir: Path to the docs2db content directory (e.g. CONTENT_DIR).
 
     Returns:
-        Number of orphaned directories removed.
+        Number of orphaned items (directories + meta files) removed.
     """
     if not content_dir.exists():
         return 0
@@ -566,8 +567,15 @@ def cleanup_orphaned_docs(content_dir: Path) -> int:
                 print(f"  Removing orphaned docs2db directory: {item.name}/")
                 shutil.rmtree(item)
                 removed += 1
+        elif item.name.endswith(".html.meta.json"):
+            # Remove orphaned meta files whose source .html no longer exists
+            stem = item.name[: -len(".meta.json")]  # e.g. "foo.html"
+            if not (content_dir / stem).exists():
+                print(f"  Removing orphaned meta file: {item.name}")
+                item.unlink()
+                removed += 1
 
-    print(f"  Removed {removed} orphaned docs2db director{'y' if removed == 1 else 'ies'}")
+    print(f"  Removed {removed} orphaned docs2db item{'s' if removed != 1 else ''}")
     return removed
 
 
