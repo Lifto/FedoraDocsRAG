@@ -7,6 +7,7 @@ All notable changes to FedoraDocsRAG will be documented in this file.
 ### Added
 - Incremental rebuild: orphaned docs2db artifact directories are automatically removed when their source HTML is no longer extracted, preventing stale content from appearing in the database
 - Persistent git clones: the Fedora doc repositories in `build/` are preserved between runs, enabling `git pull` instead of full re-clone on subsequent builds
+- Automated weekly CI: GitHub Actions workflow rebuilds the documentation database every Monday and publishes a fresh `fedora-docs.sql` as a date-versioned GitHub Release
 
 ## [1.1.1] - 2026-01-19
 

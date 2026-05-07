@@ -1,0 +1,58 @@
+name: Build Fedora Docs
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 06:00 UTC
+  workflow_dispatch:       # Manual trigger
+
+concurrency:
+  group: fedora-docs-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Restore docs content cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .docs2db
+            docs2db_content
+          key: docs-content-${{ hashFiles('build.py') }}
+          restore-keys: |
+            docs-content-
+
+      - name: Restore HuggingFace model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-model-granite-30m
+
+      - name: Build Fedora docs
+        run: uv run python build.py
+
+      - name: Set release date
+        run: echo "RELEASE_DATE=$(date +%Y.%m.%d)" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.RELEASE_DATE }}
+          name: Fedora Docs ${{ env.RELEASE_DATE }}
+          body: "Weekly automated rebuild of Fedora documentation database."
+          files: dist/fedora-docs.sql
+          make_latest: true
