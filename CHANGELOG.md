@@ -2,7 +2,7 @@
 
 All notable changes to FedoraDocsRAG will be documented in this file.
 
-## [Unreleased]
+## [1.2.0] - 2026-05-08
 
 ### Added
 - Incremental rebuild: orphaned docs2db artifact directories are automatically removed when their source HTML is no longer extracted, preventing stale content from appearing in the database
