@@ -541,6 +541,44 @@ def cleanup(work_dir: Path) -> None:
         shutil.rmtree(work_dir)
 
 
+def cleanup_orphaned_docs(content_dir: Path) -> int:
+    """Remove stale docs2db artifacts that no longer have a matching HTML file.
+
+    After extract_html_content() writes fresh .html files, any subdirectory or
+    .html.meta.json file in content_dir whose name does not correspond to an
+    existing .html file is considered orphaned (its source page was removed from
+    the Fedora docs site). This prevents stale content from being re-ingested on
+    subsequent runs.
+
+    Args:
+        content_dir: Path to the docs2db content directory (e.g. CONTENT_DIR).
+
+    Returns:
+        Number of orphaned items (directories + meta files) removed.
+    """
+    if not content_dir.exists():
+        return 0
+
+    removed = 0
+    for item in content_dir.iterdir():
+        if item.is_dir():
+            corresponding_html = content_dir / f"{item.name}.html"
+            if not corresponding_html.exists():
+                print(f"  Removing orphaned docs2db directory: {item.name}/")
+                shutil.rmtree(item)
+                removed += 1
+        elif item.name.endswith(".html.meta.json"):
+            # Remove orphaned meta files whose source .html no longer exists
+            stem = item.name[: -len(".meta.json")]  # e.g. "foo.html"
+            if not (content_dir / stem).exists():
+                print(f"  Removing orphaned meta file: {item.name}")
+                item.unlink()
+                removed += 1
+
+    print(f"  Removed {removed} orphaned docs2db item{'s' if removed != 1 else ''}")
+    return removed
+
+
 # =============================================================================
 # Main Entry Point
 # =============================================================================
@@ -598,8 +636,13 @@ def main() -> int:
         return 1
     print(f"  Extracted {count} pages")
 
-    # Clean up build directory (only on success)
-    cleanup(WORK_DIR)
+    # Step 5.5: Remove orphaned docs2db artifact directories
+    print(f"\n[5.5/{steps_total}] Removing orphaned docs2db artifacts...")
+    cleanup_orphaned_docs(CONTENT_DIR)
+
+    # Remove Antora output only — preserve git clones for faster subsequent runs
+    shutil.rmtree(WORK_DIR / "public", ignore_errors=True)
+    print(f"  Removed Antora output at {WORK_DIR / 'public'}")
 
     # Step 6: Ingest with docs2db
     print(f"\n[6/{steps_total}] Ingesting with docs2db...")
