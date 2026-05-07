@@ -45,6 +45,12 @@ jobs:
       - name: Ensure Docker is used
         run: sudo rm -f /usr/bin/podman
 
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+
       - name: Build Fedora docs
         run: uv run python build.py
 
