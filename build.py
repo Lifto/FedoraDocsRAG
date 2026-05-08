@@ -20,10 +20,13 @@ Usage:
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # =============================================================================
@@ -82,28 +85,41 @@ def check_prerequisites() -> tuple[str | None, list[str]]:
     return container_cmd, missing
 
 
-def load_manifest() -> dict | None:
-    """Download manifest from latest GitHub release; returns None on any failure (triggers full rebuild)."""
-    tmp_path = Path("/tmp/manifest.json")
+def _detect_github_repo() -> str | None:
+    """Detect the GitHub owner/repo from environment or git remote."""
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if repo:
+        return repo
+
     try:
         result = subprocess.run(
-            [
-                "gh",
-                "release",
-                "download",
-                "--pattern",
-                "manifest.json",
-                "--dir",
-                "/tmp/",
-                "--clobber",
-            ],
+            ["git", "remote", "get-url", "origin"],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=10,
         )
-        if result.returncode != 0:
-            print(f"[manifest] No manifest available: {result.stderr.strip()}")
-            return None
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            if "github.com" in url:
+                # https://github.com/owner/repo.git or git@github.com:owner/repo.git
+                return url.rstrip("/").removesuffix(".git").split("github.com")[-1].lstrip("/:")
+    except Exception:
+        pass
+
+    return None
+
+
+def load_manifest() -> dict | None:
+    """Download manifest from latest GitHub release; returns None on any failure (triggers full rebuild)."""
+    repo = _detect_github_repo()
+    if not repo:
+        print("[manifest] Cannot determine GitHub repository. Rebuilding.")
+        return None
+
+    url = f"https://github.com/{repo}/releases/latest/download/manifest.json"
+    tmp_path = Path("/tmp/manifest.json")
+    try:
+        urllib.request.urlretrieve(url, tmp_path)
 
         manifest = json.loads(tmp_path.read_text())
 
@@ -123,11 +139,14 @@ def load_manifest() -> dict | None:
         )
         return manifest
 
-    except FileNotFoundError:
-        print("[manifest] gh CLI not found. Rebuilding.")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print("[manifest] No prior manifest (no releases found). Rebuilding.")
+        else:
+            print(f"[manifest] HTTP {e.code} downloading manifest. Rebuilding.")
         return None
-    except subprocess.TimeoutExpired:
-        print("[manifest] Timeout downloading manifest. Rebuilding.")
+    except urllib.error.URLError as e:
+        print(f"[manifest] Network error downloading manifest: {e.reason}. Rebuilding.")
         return None
     except json.JSONDecodeError as e:
         print(f"[manifest] Invalid JSON in manifest: {e}. Rebuilding.")
