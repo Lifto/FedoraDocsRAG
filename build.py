@@ -476,25 +476,11 @@ def clone_repos(repos: list[str], work_dir: Path) -> list[Path]:
     return cloned
 
 
-def get_component_name(antora_yml_path: Path) -> str | None:
-    """Extract component name from antora.yml."""
-    import yaml
-
-    try:
-        with open(antora_yml_path) as f:
-            config = yaml.safe_load(f)
-        return config.get("name")
-    except Exception:
-        return None
-
-
 def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
     """Create a combined Antora playbook for all repos."""
     sources = []
     source_details = []  # Track which repos contribute sources
     repos_without_antora = []
-    seen_components = set()  # Track component names to skip duplicates
-    skipped_duplicates = []
 
     for repo_dir in repo_dirs:
         repo_has_antora = False  # Track if repo has ANY antora.yml (used or skipped)
@@ -504,34 +490,22 @@ def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
         antora_yml = repo_dir / "antora.yml"
         if antora_yml.exists():
             repo_has_antora = True
-            component = get_component_name(antora_yml)
-            if component and component in seen_components:
-                skipped_duplicates.append(f"{repo_dir.name} (root) -> @{component}")
-            else:
-                if component:
-                    seen_components.add(component)
-                sources.append(f"    - url: ./{repo_dir.name}\n      branches: HEAD")
-                source_details.append(f"{repo_dir.name} (root)")
-                repo_sources += 1
+            sources.append(f"    - url: ./{repo_dir.name}\n      branches: HEAD")
+            source_details.append(f"{repo_dir.name} (root)")
+            repo_sources += 1
 
         # Check for antora.yml in subdirectories
         for subdir in repo_dir.iterdir():
             antora_yml = subdir / "antora.yml"
             if subdir.is_dir() and antora_yml.exists():
                 repo_has_antora = True
-                component = get_component_name(antora_yml)
-                if component and component in seen_components:
-                    skipped_duplicates.append(f"{repo_dir.name}/{subdir.name} -> @{component}")
-                else:
-                    if component:
-                        seen_components.add(component)
-                    sources.append(
-                        f"    - url: ./{repo_dir.name}\n"
-                        f"      start_path: {subdir.name}\n"
-                        f"      branches: HEAD"
-                    )
-                    source_details.append(f"{repo_dir.name}/{subdir.name}")
-                    repo_sources += 1
+                sources.append(
+                    f"    - url: ./{repo_dir.name}\n"
+                    f"      start_path: {subdir.name}\n"
+                    f"      branches: HEAD"
+                )
+                source_details.append(f"{repo_dir.name}/{subdir.name}")
+                repo_sources += 1
 
         if not repo_has_antora:
             repos_without_antora.append(repo_dir.name)
@@ -540,11 +514,6 @@ def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
     print(f"\n  Antora sources found ({len(sources)} total):")
     for detail in source_details:
         print(f"    ✓ {detail}")
-
-    if skipped_duplicates:
-        print(f"\n  Skipped duplicate components ({len(skipped_duplicates)}):")
-        for dup in skipped_duplicates:
-            print(f"    ⚠ {dup}")
 
     if repos_without_antora:
         print(f"\n  Repos without antora.yml ({len(repos_without_antora)}):")
