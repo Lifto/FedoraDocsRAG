@@ -228,6 +228,9 @@ def check_repos_changed(manifest: dict, site_sha: str | None, repo_urls: list[st
                 timeout=30,
             )
             if result.returncode != 0:
+                if not manifest_sha:
+                    print(f"[gate2] {url} still unreachable (was unreachable before). Skipping.")
+                    continue
                 print(
                     f"[gate2] Warning: ls-remote failed for {url} (exit {result.returncode}). Treating as changed."
                 )
@@ -243,9 +246,15 @@ def check_repos_changed(manifest: dict, site_sha: str | None, repo_urls: list[st
                 changed_repos.append(url)
 
         except subprocess.TimeoutExpired:
+            if not manifest_sha:
+                print(f"[gate2] {url} timed out (was unreachable before). Skipping.")
+                continue
             print(f"[gate2] Timeout for {url}. Treating as changed.")
             return True
         except Exception as e:
+            if not manifest_sha:
+                print(f"[gate2] {url} error (was unreachable before): {e}. Skipping.")
+                continue
             print(f"[gate2] Error checking {url}: {e}. Treating as changed.")
             return True
 
@@ -876,8 +885,7 @@ def main(args) -> int:
         parts = url.rstrip("/").replace(".git", "").split("/")
         name = f"{parts[-2]}_{parts[-1]}" if len(parts) >= 2 else parts[-1]
         sha = get_repo_head_sha(WORK_DIR / name)
-        if sha:
-            repos_shas[url] = sha
+        repos_shas[url] = sha or ""
 
     # Step 3: Create Antora playbook with local paths
     print(f"\n[3/{steps_total}] Creating Antora playbook...")
@@ -916,6 +924,7 @@ def main(args) -> int:
         and manifest.get("content_hash") == content_hash
     ):
         print("Content hash unchanged despite SHA changes — skipping rebuild")
+        save_manifest(site_sha, repos_shas, content_hash, count)
         return 0
 
     # Step 6: Ingest with docs2db

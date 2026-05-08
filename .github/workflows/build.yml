@@ -74,3 +74,16 @@ jobs:
             dist/fedora-docs.sql
             dist/manifest.json
           make_latest: true
+
+      - name: Upload manifest to latest release
+        if: hashFiles('dist/manifest.json') != '' && hashFiles('dist/fedora-docs.sql') == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --json tagName -q .tagName 2>/dev/null)
+          if [ -n "$tag" ]; then
+            gh release upload "$tag" dist/manifest.json --clobber
+            echo "Uploaded manifest.json to release $tag"
+          else
+            echo "No existing release found, skipping manifest upload"
+          fi
