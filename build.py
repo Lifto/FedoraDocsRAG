@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import shutil
 import subprocess
@@ -245,6 +246,41 @@ def save_manifest(
     print(
         f"[manifest] Saved manifest: {pages_count} pages, {len(repos_shas)} repos -> {manifest_path}"
     )
+
+
+def compute_content_hash(content_dir: Path) -> str | None:
+    """Compute a deterministic SHA-256 hash over all extracted HTML files.
+
+    Globs only the root-level ``*.html`` files in *content_dir* (not
+    subdirectories — those are docs2db artifacts, not source content).  Files
+    are sorted by name so the result is stable across runs regardless of
+    filesystem ordering.
+
+    For each file the hash is updated with the filename (UTF-8 encoded)
+    followed by the raw file bytes, so a rename without a content change is
+    still detected.
+
+    Args:
+        content_dir: Path to the docs2db content directory (e.g. CONTENT_DIR).
+
+    Returns:
+        A hex-prefixed digest string like ``"sha256:<hex>"`` if at least one
+        HTML file is present, or ``None`` if the directory is empty or does not
+        exist.
+    """
+    if not content_dir.exists():
+        return None
+
+    files = sorted(content_dir.glob("*.html"), key=lambda f: f.name)
+    if not files:
+        return None
+
+    h = hashlib.sha256()
+    for f in files:
+        h.update(f.name.encode())
+        h.update(f.read_bytes())
+
+    return f"sha256:{h.hexdigest()}"
 
 
 # =============================================================================
@@ -852,6 +888,16 @@ def main(args) -> int:
     shutil.rmtree(WORK_DIR / "public", ignore_errors=True)
     print(f"  Removed Antora output at {WORK_DIR / 'public'}")
 
+    # Gate 3: Content hash check (false-positive prevention)
+    content_hash = compute_content_hash(CONTENT_DIR)
+    if (
+        manifest is not None
+        and content_hash is not None
+        and manifest.get("content_hash") == content_hash
+    ):
+        print("Content hash unchanged despite SHA changes — skipping rebuild")
+        return 0
+
     # Step 6: Ingest with docs2db
     print(f"\n[6/{steps_total}] Ingesting with docs2db...")
     if not run_docs2db_ingest(CONTENT_DIR):
@@ -905,7 +951,7 @@ def main(args) -> int:
         run_docs2db_db_stop()
         return 1
 
-    save_manifest(site_sha, repos_shas, "", count)
+    save_manifest(site_sha, repos_shas, content_hash or "", count)
 
     # Stop database
     print("\nStopping database...")
