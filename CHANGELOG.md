@@ -2,6 +2,13 @@
 
 All notable changes to FedoraDocsRAG will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Change detection via `git ls-remote` SHA comparison — skips full rebuild when upstream docs haven't changed
+- Manifest file (`dist/manifest.json`) saved after each build with repo SHAs, content hash, and page count
+- `--force` flag to bypass change detection and force a full rebuild
+
 ## [1.2.0] - 2026-05-08
 
 ### Added
