@@ -218,45 +218,59 @@ def check_repos_changed(manifest: dict, site_sha: str | None, repo_urls: list[st
         return True
 
     changed_repos = []
+    backoff = [0, 3, 6]  # seconds to sleep before each attempt (0 = no sleep on first attempt)
     for url in repo_urls:
         manifest_sha = manifest["content_repos"].get(url, "")
-        try:
-            result = subprocess.run(
-                ["git", "ls-remote", url, "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                if not manifest_sha:
-                    print(f"[gate2] {url} still unreachable (was unreachable before). Skipping.")
-                    continue
-                print(
-                    f"[gate2] Warning: ls-remote failed for {url} (exit {result.returncode}). Treating as changed."
+        for attempt in range(3):
+            if attempt > 0:
+                sleep_secs = backoff[attempt]
+                print(f"[gate2] ls-remote failed for {url}, retrying in {sleep_secs}s (attempt {attempt + 1}/3)...")
+                time.sleep(sleep_secs)
+            try:
+                result = subprocess.run(
+                    ["git", "ls-remote", url, "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
+                if result.returncode != 0:
+                    if attempt < 2:
+                        continue  # retry
+                    # All 3 attempts failed
+                    if not manifest_sha:
+                        print(f"[gate2] {url} still unreachable (was unreachable before). Skipping.")
+                        break
+                    print(
+                        f"[gate2] Warning: ls-remote failed for {url} after 3 attempts (exit {result.returncode}). Treating as changed."
+                    )
+                    return True
+
+                lines = result.stdout.strip().splitlines()
+                if not lines:
+                    print(f"[gate2] Warning: no HEAD ref for {url}. Treating as changed.")
+                    return True
+
+                current_sha = lines[0].split()[0]
+                if current_sha != manifest_sha:
+                    changed_repos.append(url)
+                break  # success
+
+            except subprocess.TimeoutExpired:
+                if attempt < 2:
+                    continue  # retry
+                if not manifest_sha:
+                    print(f"[gate2] {url} timed out after 3 attempts (was unreachable before). Skipping.")
+                    break
+                print(f"[gate2] Timeout for {url} after 3 attempts. Treating as changed.")
                 return True
-
-            lines = result.stdout.strip().splitlines()
-            if not lines:
-                print(f"[gate2] Warning: no HEAD ref for {url}. Treating as changed.")
+            except Exception as e:
+                if attempt < 2:
+                    continue  # retry
+                if not manifest_sha:
+                    print(f"[gate2] {url} error after 3 attempts (was unreachable before): {e}. Skipping.")
+                    break
+                print(f"[gate2] Error checking {url} after 3 attempts: {e}. Treating as changed.")
                 return True
-
-            current_sha = lines[0].split()[0]
-            if current_sha != manifest_sha:
-                changed_repos.append(url)
-
-        except subprocess.TimeoutExpired:
-            if not manifest_sha:
-                print(f"[gate2] {url} timed out (was unreachable before). Skipping.")
-                continue
-            print(f"[gate2] Timeout for {url}. Treating as changed.")
-            return True
-        except Exception as e:
-            if not manifest_sha:
-                print(f"[gate2] {url} error (was unreachable before): {e}. Skipping.")
-                continue
-            print(f"[gate2] Error checking {url}: {e}. Treating as changed.")
-            return True
 
     if changed_repos:
         print(f"[gate2] {len(changed_repos)} repos changed:")
