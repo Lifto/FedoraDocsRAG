@@ -18,6 +18,8 @@ Usage:
     uv run python build.py
 """
 
+import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -39,6 +41,9 @@ FEDORA_DOCS_SITE_REPO = "https://gitlab.com/fedora/docs/docs-website/docs-fp-o.g
 # License to assign to all Fedora documentation
 FEDORA_LICENSE = "CC-BY-SA 4.0"
 
+MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_REQUIRED_KEYS = {"schema_version", "content_repos", "content_hash", "site_repo_sha"}
+
 
 # =============================================================================
 # Utility Functions
@@ -49,7 +54,7 @@ def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subproce
     """Run a command and return the result."""
     print(f"  $ {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-#    result = subprocess.run(cmd, cwd=cwd, capture_output=False, text=True)
+    #    result = subprocess.run(cmd, cwd=cwd, capture_output=False, text=True)
 
     if check and result.returncode != 0:
         print(f"    Error (exit {result.returncode}): {result.stderr[:500]}")
@@ -77,6 +82,239 @@ def check_prerequisites() -> tuple[str | None, list[str]]:
     return container_cmd, missing
 
 
+def load_manifest() -> dict | None:
+    """Download manifest from latest GitHub release; returns None on any failure (triggers full rebuild)."""
+    tmp_path = Path("/tmp/manifest.json")
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "release",
+                "download",
+                "--pattern",
+                "manifest.json",
+                "--dir",
+                "/tmp/",
+                "--clobber",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print(f"[manifest] No manifest available: {result.stderr.strip()}")
+            return None
+
+        manifest = json.loads(tmp_path.read_text())
+
+        missing = MANIFEST_REQUIRED_KEYS - manifest.keys()
+        if missing:
+            print(f"[manifest] Invalid manifest — missing keys: {missing}. Rebuilding.")
+            return None
+
+        if manifest["schema_version"] != MANIFEST_SCHEMA_VERSION:
+            print(
+                f"[manifest] Schema version mismatch (got {manifest['schema_version']}, expected {MANIFEST_SCHEMA_VERSION}). Rebuilding."
+            )
+            return None
+
+        print(
+            f"[manifest] Loaded manifest from {manifest.get('build_date', 'unknown date')}, {len(manifest['content_repos'])} repos"
+        )
+        return manifest
+
+    except FileNotFoundError:
+        print("[manifest] gh CLI not found. Rebuilding.")
+        return None
+    except subprocess.TimeoutExpired:
+        print("[manifest] Timeout downloading manifest. Rebuilding.")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[manifest] Invalid JSON in manifest: {e}. Rebuilding.")
+        return None
+    except Exception as e:
+        print(f"[manifest] Unexpected error loading manifest: {e}. Rebuilding.")
+        return None
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
+def get_repo_head_sha(repo_dir: Path) -> str | None:
+    """Return the HEAD commit SHA of a cloned git repository.
+
+    Args:
+        repo_dir: Path to the cloned repository directory.
+
+    Returns:
+        The HEAD commit SHA as a hex string, or None if the SHA cannot be
+        determined (e.g. git is unavailable or the path is not a repository).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception as e:
+        print(f"[manifest] Warning: could not get SHA for {repo_dir}: {e}")
+    return None
+
+
+def get_site_repo_sha(site_dir: Path) -> str | None:
+    """Return the HEAD commit SHA of the cloned site repository.
+
+    Thin wrapper around :func:`get_repo_head_sha` for the site repo.
+
+    Args:
+        site_dir: Path to the cloned site repository directory.
+
+    Returns:
+        The HEAD commit SHA as a hex string, or None if unavailable.
+    """
+    return get_repo_head_sha(site_dir)
+
+
+def check_repos_changed(manifest: dict, site_sha: str | None, repo_urls: list[str]) -> bool:
+    """Gate 1: URL set diff; Gate 2: ls-remote SHA diff. Returns True if rebuild needed; True on any error (fail-safe)."""
+    manifest_repos = set(manifest.get("content_repos", {}).keys())
+    current_repos = set(repo_urls)
+
+    added = current_repos - manifest_repos
+    removed = manifest_repos - current_repos
+    if added or removed:
+        if added:
+            print(f"[gate1] New repos detected: {added}")
+        if removed:
+            print(f"[gate1] Removed repos: {removed}")
+        return True
+    print(f"[gate1] Repo set unchanged ({len(current_repos)} repos)")
+
+    if site_sha and manifest.get("site_repo_sha") != site_sha:
+        print(f"[gate2] Site repo changed: {manifest.get('site_repo_sha')[:8]} -> {site_sha[:8]}")
+        return True
+
+    changed_repos = []
+    for url in repo_urls:
+        manifest_sha = manifest["content_repos"].get(url, "")
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", url, "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                print(
+                    f"[gate2] Warning: ls-remote failed for {url} (exit {result.returncode}). Treating as changed."
+                )
+                return True
+
+            lines = result.stdout.strip().splitlines()
+            if not lines:
+                print(f"[gate2] Warning: no HEAD ref for {url}. Treating as changed.")
+                return True
+
+            current_sha = lines[0].split()[0]
+            if current_sha != manifest_sha:
+                changed_repos.append(url)
+
+        except subprocess.TimeoutExpired:
+            print(f"[gate2] Timeout for {url}. Treating as changed.")
+            return True
+        except Exception as e:
+            print(f"[gate2] Error checking {url}: {e}. Treating as changed.")
+            return True
+
+    if changed_repos:
+        print(f"[gate2] {len(changed_repos)} repos changed:")
+        for url in changed_repos[:5]:
+            print(f"  - {url}")
+        if len(changed_repos) > 5:
+            print(f"  ... and {len(changed_repos) - 5} more")
+        return True
+
+    print(f"[gate2] All {len(repo_urls)} repo SHAs unchanged")
+    return False
+
+
+def save_manifest(
+    site_sha: str | None,
+    repos_shas: dict[str, str],
+    content_hash: str,
+    pages_count: int,
+) -> None:
+    """Save the build manifest to dist/manifest.json.
+
+    Writes a JSON file that records the current build state so that
+    subsequent runs can detect whether a rebuild is necessary.
+
+    Args:
+        site_sha: HEAD SHA of the site repository, or None if unavailable.
+        repos_shas: Mapping of content repo URL to its HEAD commit SHA.
+        content_hash: xxHash digest of extracted HTML content (prefix
+            ``"xxh64:<hex>"``), or empty string if content was unavailable.
+        pages_count: Number of HTML pages extracted during this build.
+    """
+    import datetime
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "build_date": datetime.date.today().isoformat(),
+        "site_repo_sha": site_sha or "",
+        "content_repos": repos_shas,
+        "content_hash": content_hash,
+        "pages_extracted": pages_count,
+    }
+    manifest_path = OUTPUT_DIR / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    print(
+        f"[manifest] Saved manifest: {pages_count} pages, {len(repos_shas)} repos -> {manifest_path}"
+    )
+
+
+def compute_content_hash(content_dir: Path) -> str | None:
+    """Compute a deterministic xxHash over all extracted HTML files.
+
+    Globs only the root-level ``*.html`` files in *content_dir* (not
+    subdirectories — those are docs2db artifacts, not source content).  Files
+    are sorted by name so the result is stable across runs regardless of
+    filesystem ordering.
+
+    For each file the hash is updated with the filename (UTF-8 encoded)
+    followed by the raw file bytes, so a rename without a content change is
+    still detected.
+
+    Args:
+        content_dir: Path to the docs2db content directory (e.g. CONTENT_DIR).
+
+    Returns:
+        A hex-prefixed digest string like ``"xxh64:<hex>"`` if at least one
+        HTML file is present, or ``None`` if the directory is empty or does not
+        exist.
+    """
+    import xxhash
+
+    if not content_dir.exists():
+        return None
+
+    files = sorted(content_dir.glob("*.html"), key=lambda f: f.name)
+    if not files:
+        return None
+
+    h = xxhash.xxh64()
+    for f in files:
+        h.update(f.name.encode())
+        h.update(f.read_bytes())
+
+    return f"xxh64:{h.hexdigest()}"
+
+
 # =============================================================================
 # Build Steps
 # =============================================================================
@@ -85,7 +323,7 @@ def check_prerequisites() -> tuple[str | None, list[str]]:
 def clone_site_repo(work_dir: Path) -> Path | None:
     """Clone the official Fedora docs site repo to get the Antora playbook."""
     site_dir = work_dir / "docs-fp-o"
-    
+
     if site_dir.exists():
         print("    Updating docs-fp-o (prod branch)...")
         result = run(["git", "pull"], cwd=site_dir, check=False)
@@ -93,43 +331,51 @@ def clone_site_repo(work_dir: Path) -> Path | None:
         print("    Cloning docs-fp-o (prod branch)...")
         # site.yml is in the 'prod' branch, not main
         result = run(
-            ["git", "clone", "--depth", "1", "--branch", "prod", 
-             FEDORA_DOCS_SITE_REPO, str(site_dir)],
-            check=False
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                "prod",
+                FEDORA_DOCS_SITE_REPO,
+                str(site_dir),
+            ],
+            check=False,
         )
-    
+
     if result.returncode != 0:
         print("    ❌ Failed to clone Fedora docs site repo")
         return None
-    
+
     return site_dir
 
 
 def create_simplified_site_yml(site_dir: Path) -> Path:
     """Create a simplified site.yml without custom extensions."""
     import yaml
-    
+
     site_yml = site_dir / "site.yml"
     simplified_yml = site_dir / "site-simplified.yml"
-    
+
     if not site_yml.exists():
         return site_yml
-    
+
     with open(site_yml) as f:
         config = yaml.safe_load(f)
-    
+
     # Remove custom extensions that require extra npm packages
     if "antora" in config:
         config["antora"].pop("extensions", None)
-    
+
     # Remove asciidoc extensions that require extra npm packages
     if "asciidoc" in config:
         config["asciidoc"].pop("extensions", None)
-    
+
     # Write simplified config to new file
     with open(simplified_yml, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-    
+
     print("  Created site-simplified.yml (removed custom extensions)")
     return simplified_yml
 
@@ -137,22 +383,22 @@ def create_simplified_site_yml(site_dir: Path) -> Path:
 def extract_repos_from_site(site_dir: Path) -> list[str]:
     """Extract content source URLs from the Antora site.yml playbook."""
     import yaml
-    
+
     site_yml = site_dir / "site.yml"
     if not site_yml.exists():
         print(f"  Error: site.yml not found in {site_dir}")
         return []
-    
+
     try:
         with open(site_yml) as f:
             site_config = yaml.safe_load(f)
     except Exception as e:
         print(f"  Error parsing site.yml: {e}")
         return []
-    
+
     urls = []
     sources = site_config.get("content", {}).get("sources", [])
-    
+
     for source in sources:
         url = source.get("url", "")
         if url and url.startswith(("https://", "http://", "git@")):
@@ -160,7 +406,7 @@ def extract_repos_from_site(site_dir: Path) -> list[str]:
             if not url.endswith(".git"):
                 url = url + ".git"
             urls.append(url)
-    
+
     # Deduplicate while preserving order
     seen = set()
     unique_urls = []
@@ -168,7 +414,7 @@ def extract_repos_from_site(site_dir: Path) -> list[str]:
         if url not in seen:
             seen.add(url)
             unique_urls.append(url)
-    
+
     print(f"  Found {len(unique_urls)} unique content sources in site.yml")
     return unique_urls
 
@@ -207,13 +453,14 @@ def clone_repos(repos: list[str], work_dir: Path) -> list[Path]:
     print(f"\n  Clone summary: {len(cloned)}/{len(repos)} successful")
     if failed:
         print(f"  Failed repos: {', '.join(failed)}")
-    
+
     return cloned
 
 
 def get_component_name(antora_yml_path: Path) -> str | None:
     """Extract component name from antora.yml."""
     import yaml
+
     try:
         with open(antora_yml_path) as f:
             config = yaml.safe_load(f)
@@ -233,7 +480,7 @@ def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
     for repo_dir in repo_dirs:
         repo_has_antora = False  # Track if repo has ANY antora.yml (used or skipped)
         repo_sources = 0
-        
+
         # Check if repo has antora.yml at root
         antora_yml = repo_dir / "antora.yml"
         if antora_yml.exists():
@@ -266,7 +513,7 @@ def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
                     )
                     source_details.append(f"{repo_dir.name}/{subdir.name}")
                     repo_sources += 1
-        
+
         if not repo_has_antora:
             repos_without_antora.append(repo_dir.name)
 
@@ -274,12 +521,12 @@ def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
     print(f"\n  Antora sources found ({len(sources)} total):")
     for detail in source_details:
         print(f"    ✓ {detail}")
-    
+
     if skipped_duplicates:
         print(f"\n  Skipped duplicate components ({len(skipped_duplicates)}):")
         for dup in skipped_duplicates:
             print(f"    ⚠ {dup}")
-    
+
     if repos_without_antora:
         print(f"\n  Repos without antora.yml ({len(repos_without_antora)}):")
         for name in repos_without_antora:
@@ -315,10 +562,13 @@ runtime:
 def build_with_antora(container_cmd: str, work_dir: Path, site_yml: str = "site.yml") -> bool:
     """Build documentation using Antora in a container."""
     cmd = [
-        container_cmd, "run", "--rm",
-        "-v", f"{work_dir.absolute()}:/antora:Z",
+        container_cmd,
+        "run",
+        "--rm",
+        "-v",
+        f"{work_dir.absolute()}:/antora:Z",
         ANTORA_IMAGE,
-        site_yml
+        site_yml,
     ]
 
     print(f"  $ {' '.join(cmd)}")
@@ -358,7 +608,7 @@ def extract_html_content(work_dir: Path, output_dir: Path) -> int:
     count = 0
     skipped_no_article = 0
     component_counts = defaultdict(int)  # Track pages per component
-    
+
     for html_file in public_dir.rglob("*.html"):
         # Skip special files
         if html_file.name in ("404.html", "sitemap.html", "search.html"):
@@ -387,7 +637,7 @@ def extract_html_content(work_dir: Path, output_dir: Path) -> int:
             rel_path = html_file.relative_to(public_dir)
             out_name = str(rel_path).replace("/", "_")
             out_path = output_dir / out_name
-            
+
             # Track by component (first directory in path)
             component = rel_path.parts[0] if rel_path.parts else "unknown"
             component_counts[component] += 1
@@ -411,21 +661,20 @@ def extract_html_content(work_dir: Path, output_dir: Path) -> int:
             print(f"  Warning: Could not process {html_file}: {e}")
 
     # Print extraction summary
-    print(f"\n  Pages extracted by component:")
+    print("\n  Pages extracted by component:")
     for component, comp_count in sorted(component_counts.items(), key=lambda x: -x[1]):
         print(f"    {component}: {comp_count} pages")
-    
+
     if skipped_no_article:
         print(f"\n  Skipped {skipped_no_article} files (no article content)")
-    
+
     return count
 
 
 def run_docs2db_db_destroy() -> bool:
     """Run docs2db db-destroy to ensure clean state."""
     cmd = ["uv", "run", "docs2db", "db-destroy"]
-    result = run(cmd, check=False)
-    # db-destroy may fail if no database exists, that's OK
+    run(cmd, check=False)
     return True
 
 
@@ -459,7 +708,7 @@ def run_docs2db_embed() -> bool:
 
 def run_docs2db_config_refinement() -> bool:
     """Configure RAG refinement prompt for Fedora documentation."""
-    prompt = '''You are an expert in Fedora Linux, the Fedora Project, and Linux in general.
+    prompt = """You are an expert in Fedora Linux, the Fedora Project, and Linux in general.
 
 Your purpose is to generate meaningful and specific questions based on user queries.
 
@@ -501,8 +750,8 @@ If the user query could reasonably relate to Fedora, Linux, or open source, proc
 - Avoid numbered lists, bullet points, headings, or any formatting. Just plain text.
 - DO NOT include any introduction, explanation, commentary, or conclusion.
 
-User query: {question}'''
-    
+User query: {question}"""
+
     cmd = ["uv", "run", "docs2db", "config", "--refinement-prompt", prompt]
     result = run(cmd, check=False)
     return result.returncode == 0
@@ -511,9 +760,14 @@ User query: {question}'''
 def run_docs2db_load(title: str, description: str) -> bool:
     """Run docs2db load to insert data into the database."""
     cmd = [
-        "uv", "run", "docs2db", "load",
-        "--title", title,
-        "--description", description,
+        "uv",
+        "run",
+        "docs2db",
+        "load",
+        "--title",
+        title,
+        "--description",
+        description,
     ]
     result = run(cmd, check=False)
     return result.returncode == 0
@@ -584,7 +838,7 @@ def cleanup_orphaned_docs(content_dir: Path) -> int:
 # =============================================================================
 
 
-def main() -> int:
+def main(args) -> int:
     print("=" * 70)
     print("Fedora Docs RAG Database Builder")
     print("=" * 70)
@@ -605,15 +859,37 @@ def main() -> int:
     if not site_dir:
         print("Error: Could not fetch Fedora docs site repo!")
         return 1
-    
+    site_sha = get_site_repo_sha(site_dir)
+
     # Step 2: Extract and clone content repositories
     repos = extract_repos_from_site(site_dir)
+
+    if not args.force:
+        manifest = load_manifest()
+        if manifest is not None:
+            if not check_repos_changed(manifest, site_sha, repos):
+                print("\nNo changes detected. Skipping build.")
+                return 0
+        else:
+            print("[manifest] No prior manifest. Proceeding with full build.")
+    else:
+        print("[manifest] --force flag set. Skipping change detection.")
+        manifest = None
+
     print(f"\n[2/{steps_total}] Cloning {len(repos)} content repositories...")
     repo_dirs = clone_repos(repos, WORK_DIR)
     if not repo_dirs:
         print("Error: No repositories cloned!")
         return 1
     print(f"  Cloned {len(repo_dirs)} repositories")
+
+    repos_shas = {}
+    for url in repos:
+        parts = url.rstrip("/").replace(".git", "").split("/")
+        name = f"{parts[-2]}_{parts[-1]}" if len(parts) >= 2 else parts[-1]
+        sha = get_repo_head_sha(WORK_DIR / name)
+        if sha:
+            repos_shas[url] = sha
 
     # Step 3: Create Antora playbook with local paths
     print(f"\n[3/{steps_total}] Creating Antora playbook...")
@@ -644,6 +920,16 @@ def main() -> int:
     shutil.rmtree(WORK_DIR / "public", ignore_errors=True)
     print(f"  Removed Antora output at {WORK_DIR / 'public'}")
 
+    # Gate 3: Content hash check (false-positive prevention)
+    content_hash = compute_content_hash(CONTENT_DIR)
+    if (
+        manifest is not None
+        and content_hash is not None
+        and manifest.get("content_hash") == content_hash
+    ):
+        print("Content hash unchanged despite SHA changes — skipping rebuild")
+        return 0
+
     # Step 6: Ingest with docs2db
     print(f"\n[6/{steps_total}] Ingesting with docs2db...")
     if not run_docs2db_ingest(CONTENT_DIR):
@@ -670,7 +956,7 @@ def main() -> int:
     if not run_docs2db_db_start():
         print("Error: Failed to start database!")
         return 1
-    
+
     print("  Waiting for PostgreSQL to initialize...")
     time.sleep(5)
 
@@ -683,7 +969,7 @@ def main() -> int:
     print(f"\n[12/{steps_total}] Loading into database...")
     if not run_docs2db_load(
         title="Fedora Documentation",
-        description="RAG database of Fedora Project documentation generated by https://github.com/Lifto/FedoraDocsRAG"
+        description="RAG database of Fedora Project documentation generated by https://github.com/Lifto/FedoraDocsRAG",
     ):
         print("Error: Loading failed!")
         run_docs2db_db_stop()
@@ -696,6 +982,8 @@ def main() -> int:
         print("Error: Dump creation failed!")
         run_docs2db_db_stop()
         return 1
+
+    save_manifest(site_sha, repos_shas, content_hash or "", count)
 
     # Stop database
     print("\nStopping database...")
@@ -715,4 +1003,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description="Build FedoraDocsRAG")
+    parser.add_argument(
+        "--force", action="store_true", help="Force full rebuild, ignoring manifest"
+    )
+    args = parser.parse_args()
+    sys.exit(main(args))
