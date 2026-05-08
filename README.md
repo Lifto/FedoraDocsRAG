@@ -59,10 +59,13 @@ uv run python build.py
 ```
 
 The build script will:
-1. Clone all Fedora documentation repositories
-2. Build them with Antora (in a container)
-3. Ingest, chunk, and embed using docs2db
-4. Create a database dump in `dist/fedora-docs.sql`
+1. Check for upstream changes (skips rebuild if nothing changed)
+2. Clone all Fedora documentation repositories
+3. Build them with Antora (in a container)
+4. Ingest, chunk, and embed using docs2db
+5. Create a database dump in `dist/fedora-docs.sql`
+
+Use `--force` to bypass change detection and force a full rebuild.
 
 ## Documentation Sources
 

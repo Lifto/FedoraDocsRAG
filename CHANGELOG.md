@@ -2,13 +2,21 @@
 
 All notable changes to FedoraDocsRAG will be documented in this file.
 
-## [Unreleased]
+## [1.3.0] - 2026-05-08
 
 ### Added
 - Change detection via `git ls-remote` SHA comparison — skips full rebuild when upstream docs haven't changed
-- Manifest file (`dist/manifest.json`) saved after each build with repo SHAs, content hash, and page count
+- Content hash gate (xxHash) as false-positive safety net — prevents rebuild when SHAs change but actual content doesn't
+- Manifest file (`dist/manifest.json`) published with each release, tracking repo SHAs and content hash
 - `--force` flag to bypass change detection and force a full rebuild
 - Force-rebuild workflow input for `workflow_dispatch` triggers
+- Retry with backoff (3s/6s) for flaky `git ls-remote` calls
+
+### Fixed
+- Data loss: duplicate component check was silently dropping sysadmin-guide (45+ pages)
+- Manifest not saved on skip path, causing redundant rebuilds every run (groundhog day bug)
+- Unreachable repos triggering false-positive rebuilds indefinitely
+- Replaced `gh` CLI with `urllib` for manifest download — no `GH_TOKEN` needed in CI
 
 ### Changed
 - CI rebuild schedule changed from weekly (Monday) to daily at 06:00 UTC
