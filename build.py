@@ -19,7 +19,6 @@ Usage:
 """
 
 import argparse
-import hashlib
 import json
 import shutil
 import subprocess
@@ -257,8 +256,8 @@ def save_manifest(
     Args:
         site_sha: HEAD SHA of the site repository, or None if unavailable.
         repos_shas: Mapping of content repo URL to its HEAD commit SHA.
-        content_hash: SHA-256 digest of extracted HTML content (prefix
-            ``"sha256:<hex>"``), or empty string if content was unavailable.
+        content_hash: xxHash digest of extracted HTML content (prefix
+            ``"xxh64:<hex>"``), or empty string if content was unavailable.
         pages_count: Number of HTML pages extracted during this build.
     """
     import datetime
@@ -280,7 +279,7 @@ def save_manifest(
 
 
 def compute_content_hash(content_dir: Path) -> str | None:
-    """Compute a deterministic SHA-256 hash over all extracted HTML files.
+    """Compute a deterministic xxHash over all extracted HTML files.
 
     Globs only the root-level ``*.html`` files in *content_dir* (not
     subdirectories — those are docs2db artifacts, not source content).  Files
@@ -295,10 +294,12 @@ def compute_content_hash(content_dir: Path) -> str | None:
         content_dir: Path to the docs2db content directory (e.g. CONTENT_DIR).
 
     Returns:
-        A hex-prefixed digest string like ``"sha256:<hex>"`` if at least one
+        A hex-prefixed digest string like ``"xxh64:<hex>"`` if at least one
         HTML file is present, or ``None`` if the directory is empty or does not
         exist.
     """
+    import xxhash
+
     if not content_dir.exists():
         return None
 
@@ -306,12 +307,12 @@ def compute_content_hash(content_dir: Path) -> str | None:
     if not files:
         return None
 
-    h = hashlib.sha256()
+    h = xxhash.xxh64()
     for f in files:
         h.update(f.name.encode())
         h.update(f.read_bytes())
 
-    return f"sha256:{h.hexdigest()}"
+    return f"xxh64:{h.hexdigest()}"
 
 
 # =============================================================================
