@@ -2,7 +2,7 @@ name: Build Fedora Docs
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+    - cron: '22 6 * * *'  # Daily at 06:22 UTC
   workflow_dispatch:       # Manual trigger
     inputs:
       force:
