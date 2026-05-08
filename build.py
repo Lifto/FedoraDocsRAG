@@ -142,6 +142,15 @@ def load_manifest() -> dict | None:
 
 
 def get_repo_head_sha(repo_dir: Path) -> str | None:
+    """Return the HEAD commit SHA of a cloned git repository.
+
+    Args:
+        repo_dir: Path to the cloned repository directory.
+
+    Returns:
+        The HEAD commit SHA as a hex string, or None if the SHA cannot be
+        determined (e.g. git is unavailable or the path is not a repository).
+    """
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -158,6 +167,16 @@ def get_repo_head_sha(repo_dir: Path) -> str | None:
 
 
 def get_site_repo_sha(site_dir: Path) -> str | None:
+    """Return the HEAD commit SHA of the cloned site repository.
+
+    Thin wrapper around :func:`get_repo_head_sha` for the site repo.
+
+    Args:
+        site_dir: Path to the cloned site repository directory.
+
+    Returns:
+        The HEAD commit SHA as a hex string, or None if unavailable.
+    """
     return get_repo_head_sha(site_dir)
 
 
@@ -230,6 +249,18 @@ def save_manifest(
     content_hash: str,
     pages_count: int,
 ) -> None:
+    """Save the build manifest to dist/manifest.json.
+
+    Writes a JSON file that records the current build state so that
+    subsequent runs can detect whether a rebuild is necessary.
+
+    Args:
+        site_sha: HEAD SHA of the site repository, or None if unavailable.
+        repos_shas: Mapping of content repo URL to its HEAD commit SHA.
+        content_hash: SHA-256 digest of extracted HTML content (prefix
+            ``"sha256:<hex>"``), or empty string if content was unavailable.
+        pages_count: Number of HTML pages extracted during this build.
+    """
     import datetime
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
