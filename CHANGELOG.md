@@ -8,6 +8,10 @@ All notable changes to FedoraDocsRAG will be documented in this file.
 - Change detection via `git ls-remote` SHA comparison — skips full rebuild when upstream docs haven't changed
 - Manifest file (`dist/manifest.json`) saved after each build with repo SHAs, content hash, and page count
 - `--force` flag to bypass change detection and force a full rebuild
+- Force-rebuild workflow input for `workflow_dispatch` triggers
+
+### Changed
+- CI rebuild schedule changed from weekly (Monday) to daily at 06:00 UTC
 
 ## [1.2.0] - 2026-05-08
 

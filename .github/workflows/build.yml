@@ -2,8 +2,13 @@ name: Build Fedora Docs
 
 on:
   schedule:
-    - cron: '0 6 * * 1'  # Weekly on Monday at 06:00 UTC
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
   workflow_dispatch:       # Manual trigger
+    inputs:
+      force:
+        description: 'Force full rebuild (ignore manifest)'
+        type: boolean
+        default: false
 
 concurrency:
   group: fedora-docs-build
@@ -52,16 +57,20 @@ jobs:
           sudo apt-get install -y postgresql-client-17
 
       - name: Build Fedora docs
-        run: uv run python build.py
+        run: uv run python build.py ${{ inputs.force == 'true' && '--force' || '' }}
 
       - name: Set release date
+        if: hashFiles('dist/fedora-docs.sql') != ''
         run: echo "RELEASE_DATE=$(date +%Y.%m.%d)" >> "$GITHUB_ENV"
 
       - name: Publish GitHub Release
+        if: hashFiles('dist/fedora-docs.sql') != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.RELEASE_DATE }}
           name: Fedora Docs ${{ env.RELEASE_DATE }}
-          body: "Weekly automated rebuild of Fedora documentation database."
-          files: dist/fedora-docs.sql
+          body: "Daily automated rebuild of Fedora documentation database."
+          files: |
+            dist/fedora-docs.sql
+            dist/manifest.json
           make_latest: true
