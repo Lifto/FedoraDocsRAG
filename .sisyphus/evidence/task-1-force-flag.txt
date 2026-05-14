@@ -1,0 +1,8 @@
+usage: build.py [-h] [--force]
+
+Build FedoraDocsRAG
+
+options:
+  -h, --help  show this help message and exit
+  --force     Force full rebuild, ignoring manifest
+PASS: --force flag exists

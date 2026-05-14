@@ -27,7 +27,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
 from pathlib import Path
+
 
 # =============================================================================
 # Configuration
@@ -599,6 +601,7 @@ def build_with_antora(container_cmd: str, work_dir: Path, site_yml: str = "site.
 def extract_html_content(work_dir: Path, output_dir: Path) -> int:
     """Extract article content from built HTML files."""
     import json
+
     from collections import defaultdict
 
     from bs4 import BeautifulSoup

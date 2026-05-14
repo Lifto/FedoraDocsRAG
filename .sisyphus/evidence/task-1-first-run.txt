@@ -1,0 +1,3 @@
+[manifest] No manifest available: no assets match the file pattern
+load_manifest() returned: None
+PASS: Graceful fallback on no manifest
