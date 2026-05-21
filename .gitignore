@@ -31,3 +31,4 @@ dist/
 
 # AI agent working files
 .sisyphus/
+.coverage

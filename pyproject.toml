@@ -70,8 +70,14 @@ lines-after-imports = 2
 lines-between-types = 1
 order-by-type = false
 
+[tool.pytest.ini_options]
+addopts = "--cov=build --cov-report=term-missing"
+
 [dependency-groups]
 dev = [
+    "pre-commit>=4.2.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
     "ruff>=0.15.13",
 ]
 
