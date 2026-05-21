@@ -28,3 +28,6 @@ Thumbs.db
 
 # Build output (distributed via GitHub Releases)
 dist/
+
+# AI agent working files
+.sisyphus/

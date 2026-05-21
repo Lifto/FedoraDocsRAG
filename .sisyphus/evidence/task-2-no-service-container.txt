@@ -1,1 +1,0 @@
-CONFIRMED: no 'services:' section found

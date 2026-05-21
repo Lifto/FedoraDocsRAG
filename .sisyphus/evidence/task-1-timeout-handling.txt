@@ -1,4 +1,0 @@
-[gate1] Repo set unchanged (1 repos)
-[gate2] Warning: ls-remote failed for https://example.invalid/repo.git (exit 128). Treating as changed.
-check_repos_changed result: True
-PASS: Unreachable repo treated as changed

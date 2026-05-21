@@ -58,7 +58,7 @@ MANIFEST_REQUIRED_KEYS = {"schema_version", "content_repos", "content_hash", "si
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
     """Run a command and return the result."""
     print(f"  $ {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)  # noqa: S603
     #    result = subprocess.run(cmd, cwd=cwd, capture_output=False, text=True)
 
     if check and result.returncode != 0:
@@ -95,7 +95,7 @@ def _detect_github_repo() -> str | None:
 
     try:
         result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
+            ["git", "remote", "get-url", "origin"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=10,
@@ -105,7 +105,7 @@ def _detect_github_repo() -> str | None:
             if "github.com" in url:
                 # https://github.com/owner/repo.git or git@github.com:owner/repo.git
                 return url.rstrip("/").removesuffix(".git").split("github.com")[-1].lstrip("/:")
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     return None
@@ -119,9 +119,9 @@ def load_manifest() -> dict | None:
         return None
 
     url = f"https://github.com/{repo}/releases/latest/download/manifest.json"
-    tmp_path = Path("/tmp/manifest.json")
+    tmp_path = Path("/tmp/manifest.json")  # noqa: S108
     try:
-        urllib.request.urlretrieve(url, tmp_path)
+        urllib.request.urlretrieve(url, tmp_path)  # noqa: S310
 
         manifest = json.loads(tmp_path.read_text())
 
@@ -132,12 +132,14 @@ def load_manifest() -> dict | None:
 
         if manifest["schema_version"] != MANIFEST_SCHEMA_VERSION:
             print(
-                f"[manifest] Schema version mismatch (got {manifest['schema_version']}, expected {MANIFEST_SCHEMA_VERSION}). Rebuilding."
+                f"[manifest] Schema version mismatch "
+                f"(got {manifest['schema_version']}, expected {MANIFEST_SCHEMA_VERSION}). Rebuilding."
             )
             return None
 
         print(
-            f"[manifest] Loaded manifest from {manifest.get('build_date', 'unknown date')}, {len(manifest['content_repos'])} repos"
+            f"[manifest] Loaded manifest from {manifest.get('build_date', 'unknown date')},"
+            f" {len(manifest['content_repos'])} repos"
         )
         return manifest
 
@@ -173,7 +175,7 @@ def get_repo_head_sha(repo_dir: Path) -> str | None:
     """
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
             cwd=repo_dir,
             capture_output=True,
             text=True,
@@ -201,7 +203,10 @@ def get_site_repo_sha(site_dir: Path) -> str | None:
 
 
 def check_repos_changed(manifest: dict, site_sha: str | None, repo_urls: list[str]) -> bool:
-    """Gate 1: URL set diff; Gate 2: ls-remote SHA diff. Returns True if rebuild needed; True on any error (fail-safe)."""
+    """Gate 1: URL set diff; Gate 2: ls-remote SHA diff.
+
+    Returns True if rebuild needed; True on any error (fail-safe).
+    """
     manifest_repos = set(manifest.get("content_repos", {}).keys())
     current_repos = set(repo_urls)
 
@@ -229,8 +234,8 @@ def check_repos_changed(manifest: dict, site_sha: str | None, repo_urls: list[st
                 print(f"[gate2] ls-remote failed for {url}, retrying in {sleep_secs}s (attempt {attempt + 1}/3)...")
                 time.sleep(sleep_secs)
             try:
-                result = subprocess.run(
-                    ["git", "ls-remote", url, "HEAD"],
+                result = subprocess.run(  # noqa: S603
+                    ["git", "ls-remote", url, "HEAD"],  # noqa: S607
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -243,7 +248,8 @@ def check_repos_changed(manifest: dict, site_sha: str | None, repo_urls: list[st
                         print(f"[gate2] {url} still unreachable (was unreachable before). Skipping.")
                         break
                     print(
-                        f"[gate2] Warning: ls-remote failed for {url} after 3 attempts (exit {result.returncode}). Treating as changed."
+                        f"[gate2] Warning: ls-remote failed for {url} after 3 attempts"
+                        f" (exit {result.returncode}). Treating as changed."
                     )
                     return True
 
@@ -317,9 +323,7 @@ def save_manifest(
     }
     manifest_path = OUTPUT_DIR / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
-    print(
-        f"[manifest] Saved manifest: {pages_count} pages, {len(repos_shas)} repos -> {manifest_path}"
-    )
+    print(f"[manifest] Saved manifest: {pages_count} pages, {len(repos_shas)} repos -> {manifest_path}")
 
 
 def compute_content_hash(content_dir: Path) -> str | None:
@@ -524,11 +528,7 @@ def create_antora_playbook(work_dir: Path, repo_dirs: list[Path]) -> bool:
             antora_yml = subdir / "antora.yml"
             if subdir.is_dir() and antora_yml.exists():
                 repo_has_antora = True
-                sources.append(
-                    f"    - url: ./{repo_dir.name}\n"
-                    f"      start_path: {subdir.name}\n"
-                    f"      branches: HEAD"
-                )
+                sources.append(f"    - url: ./{repo_dir.name}\n      start_path: {subdir.name}\n      branches: HEAD")
                 source_details.append(f"{repo_dir.name}/{subdir.name}")
                 repo_sources += 1
 
@@ -585,7 +585,7 @@ def build_with_antora(container_cmd: str, work_dir: Path, site_yml: str = "site.
     ]
 
     print(f"  $ {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
     if result.returncode != 0:
         print(f"  Error (exit {result.returncode}):")
         if result.stdout:
@@ -935,11 +935,7 @@ def main(args) -> int:
 
     # Gate 3: Content hash check (false-positive prevention)
     content_hash = compute_content_hash(CONTENT_DIR)
-    if (
-        manifest is not None
-        and content_hash is not None
-        and manifest.get("content_hash") == content_hash
-    ):
+    if manifest is not None and content_hash is not None and manifest.get("content_hash") == content_hash:
         print("Content hash unchanged despite SHA changes — skipping rebuild")
         save_manifest(site_sha, repos_shas, content_hash, count)
         return 0
@@ -1018,8 +1014,6 @@ def main(args) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build FedoraDocsRAG")
-    parser.add_argument(
-        "--force", action="store_true", help="Force full rebuild, ignoring manifest"
-    )
+    parser.add_argument("--force", action="store_true", help="Force full rebuild, ignoring manifest")
     args = parser.parse_args()
     sys.exit(main(args))

@@ -1,7 +1,0 @@
-      - name: Publish GitHub Release
-        if: hashFiles('dist/fedora-docs.sql') != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.RELEASE_DATE }}
-          name: Fedora Docs ${{ env.RELEASE_DATE }}
-PASS: release step has hashFiles conditional

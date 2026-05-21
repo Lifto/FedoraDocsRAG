@@ -1,7 +1,0 @@
-52:        uses: softprops/action-gh-release@v2
-53-        with:
-54-          tag_name: v${{ env.RELEASE_DATE }}
-55-          name: Fedora Docs ${{ env.RELEASE_DATE }}
-56-          body: "Weekly automated rebuild of Fedora documentation database."
-57-          files: dist/fedora-docs.sql
-58-          make_latest: true

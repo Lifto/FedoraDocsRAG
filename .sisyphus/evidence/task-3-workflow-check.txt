@@ -1,4 +1,0 @@
-PASS: daily cron
-PASS: force input is boolean
-PASS: manifest.json in release files
-PASS: conditional release found
