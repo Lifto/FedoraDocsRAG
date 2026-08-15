@@ -48,7 +48,18 @@ jobs:
           key: hf-model-granite-30m
 
       - name: Ensure Docker is used
-        run: sudo rm -f /usr/bin/podman
+        run: |
+          # Remove podman from all locations — runner image may install it
+          # outside /usr/bin (e.g. /usr/local/bin on 20260810+ images).
+          # docs2db and build.py both prefer podman when present, but the
+          # workflow needs Docker Compose for the database step.
+          for p in /usr/bin/podman /usr/local/bin/podman; do
+            sudo rm -f "$p"
+          done
+          if command -v podman &>/dev/null; then
+            sudo rm -f "$(command -v podman)"
+          fi
+          echo "Container runtime check: $(command -v docker || echo 'docker not found!')"
 
       - name: Install PostgreSQL 17 client
         run: |
