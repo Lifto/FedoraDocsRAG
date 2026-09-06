@@ -109,3 +109,7 @@ Contributions are welcome! Please:
 - [docs2db](https://github.com/rhel-lightspeed/docs2db) - The ingestion pipeline
 - [docs2db-api](https://github.com/rhel-lightspeed/docs2db-api) - Query API for docs2db databases
 - [Fedora Docs](https://docs.fedoraproject.org/) - The upstream documentation
+
+---
+
+*Powered by [Drella](https://github.com/drellabot/orchestrator)*
